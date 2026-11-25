@@ -80,575 +80,727 @@ os.system(f'du -sh "{extract_dir}"')
 print("\nFolder structure:")
 os.system(f'find "{extract_dir}" -maxdepth 3 -type d | head -50')
 
-import glob
+from pathlib import Path
+from collections import Counter
 
-# Automatically discover the extracted audio file locations inside the new destination
-extracted_mp3_files = glob.glob("/content/ADD_train_dev_extracted/**/*.mp3", recursive=True)
-extracted_wav_files = glob.glob("/content/ADD_train_dev_extracted/**/*.wav", recursive=True)
+# Find the extracted dataset
+dataset_dir = Path("/content/ADD2022")
 
-print("Total MP3 files found:", len(extracted_mp3_files))
-print("Total WAV files found:", len(extracted_wav_files))
+label_files = list(dataset_dir.rglob("*label*.txt"))
 
-# Let's inspect a few found files to map them to 'Real' and 'Fake' datasets
-if extracted_mp3_files:
-    print("Sample MP3 files:", extracted_mp3_files[:5])
-if extracted_wav_files:
-    print("Sample WAV files:", extracted_wav_files[:5])
-
-# Inspect ADD 2022 directory structure
-
-import os
-import glob
-
-DATASET_PATH = "/content/ADD2022"
-
-# Show directories
-print("DIRECTORIES:\n")
-
-for root, dirs, files in os.walk(DATASET_PATH):
-    level = root.replace(DATASET_PATH, "").count(os.sep)
-
-    if level <= 3:
-        indent = "    " * level
-        print(f"{indent}{os.path.basename(root)}/")
-
-print("\n" + "="*70)
-
-# Show first 100 audio file paths
-audio_files = []
-
-for ext in ["*.wav", "*.WAV", "*.flac", "*.mp3"]:
-    audio_files.extend(
-        glob.glob(
-            os.path.join(DATASET_PATH, "**", ext),
-            recursive=True
-        )
-    )
-
-audio_files = sorted(audio_files)
-
-print(f"\nTotal audio files: {len(audio_files)}")
-print("\nFirst 100 audio paths:\n")
-
-for f in audio_files[:100]:
+print("Label files found:")
+for f in label_files:
     print(f)
 
-import os
-import glob
+# Count each label in every label file
+for label_file in label_files:
+    counts = Counter()
+    total = 0
 
-LABEL_PATH = "/content/ADD2022/ADD_train_dev/label"
+    with open(label_file, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split()
 
-print("LABEL DIRECTORY:")
-print("=" * 70)
+            if len(parts) >= 2:
+                label = parts[-1]
+                counts[label] += 1
+                total += 1
 
-# Show everything inside label/
-for root, dirs, files in os.walk(LABEL_PATH):
-    level = root.replace(LABEL_PATH, "").count(os.sep)
-    indent = "    " * level
+    print(f"\n{'=' * 40}")
+    print("File:", label_file.name)
+    print("Total labelled samples:", total)
 
-    print(f"{indent}{os.path.basename(root)}/")
+    for label, count in sorted(counts.items()):
+        print(f"{label}: {count}")
 
-    for file in files[:30]:
-        print(f"{indent}    {file}")
+from pathlib import Path
+from collections import Counter
 
-print("\n" + "=" * 70)
+root = Path("/content/ADD2022/ADD_train_dev")
 
-# Show all label files with their sizes
-label_files = []
+for name in ["train_label.txt", "dev_label.txt"]:
+    path = root / "label" / name
 
-for root, dirs, files in os.walk(LABEL_PATH):
-    for file in files:
-        path = os.path.join(root, file)
-        label_files.append(path)
+    print(f"\n--- {name}: first 15 entries ---")
+    with open(path, "r", encoding="utf-8") as f:
+        for _, line in zip(range(15), f):
+            print(line.strip())
 
-print(f"\nTotal label files: {len(label_files)}\n")
+    # Count all distinct label values
+    labels = Counter()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                labels[parts[-1]] += 1
 
-for f in label_files:
-    print(
-        os.path.basename(f),
-        " | ",
-        os.path.getsize(f),
-        "bytes",
-        " | ",
-        f
-    )
-
-print("\n" + "=" * 70)
-
-# Print first 20 lines of every small text/csv/json label file
-for f in label_files:
-
-    if os.path.getsize(f) < 5_000_000:
-
-        print("\n\nFILE:", f)
-        print("-" * 70)
-
-        try:
-            with open(f, "r", encoding="utf-8") as file:
-                for i, line in enumerate(file):
-                    print(line.rstrip())
-
-                    if i >= 19:
-                        break
-
-        except Exception as e:
-            print("Could not read as text:", e)
-
-# ============================================================
-# ADD 2022 — JITTER + SHIMMER CLUSTERING
-# Genuine vs Fake Speech
-# ============================================================
+    print("Distinct labels and counts:", labels)
 
 !pip install -q praat-parselmouth
-!pip install -q praat-parselmouth librosa soundfile scikit-learn pandas matplotlib seaborn
 
 import os
 import numpy as np
 import pandas as pd
 import parselmouth
+
+from pathlib import Path
+from collections import defaultdict
+
+# Dataset paths
+ROOT = Path("/content/ADD2022/ADD_train_dev")
+
+# Select up to 250 samples per class from each split
+SAMPLES_PER_CLASS = 250
+
+records = []
+
+for split in ["train", "dev"]:
+    label_file = ROOT / "label" / f"{split}_label.txt"
+    audio_dir = ROOT / split
+
+    # Group audio filenames by label
+    grouped = defaultdict(list)
+
+    with open(label_file, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split()
+
+            if len(parts) >= 2:
+                filename, label = parts[0], parts[-1].lower()
+
+                if label in ["genuine", "fake"]:
+                    grouped[label].append(filename)
+
+    # Select samples from each class
+    selected = []
+
+    for label in ["genuine", "fake"]:
+        available = grouped[label]
+        count = min(SAMPLES_PER_CLASS, len(available))
+        selected.extend(
+            (filename, label)
+            for filename in available[:count]
+        )
+
+    print(f"\nProcessing {split}: {len(selected)} files")
+
+    for i, (filename, label) in enumerate(selected, start=1):
+        audio_path = audio_dir / filename
+
+        try:
+            sound = parselmouth.Sound(str(audio_path))
+
+            # Estimate pitch and vocal-cycle points
+            pitch = sound.to_pitch(
+                time_step=0.01,
+                pitch_floor=75,
+                pitch_ceiling=600
+            )
+
+            point_process = parselmouth.praat.call(
+                [sound, pitch],
+                "To PointProcess (cc)"
+            )
+
+            # Local Jitter
+            jitter = parselmouth.praat.call(
+                point_process,
+                "Get jitter (local)",
+                0, 0, 0.0001, 0.02, 1.3
+            )
+
+            # Local Shimmer
+            shimmer = parselmouth.praat.call(
+                [sound, point_process],
+                "Get shimmer (local)",
+                0, 0, 0.0001, 0.02, 1.3, 1.6
+            )
+
+            # Ignore invalid/non-finite measurements
+            if np.isfinite(jitter) and np.isfinite(shimmer):
+                records.append({
+                    "filename": filename,
+                    "split": split,
+                    "label": label,
+                    "jitter": float(jitter),
+                    "shimmer": float(shimmer)
+                })
+
+        except Exception as e:
+            print(f"Skipped {filename}: {e}")
+
+        if i % 50 == 0:
+            print(f"Processed {i}/{len(selected)}")
+
+# Save extracted features
+df = pd.DataFrame(records)
+
+output_csv = "/content/ADD2022_jitter_shimmer_sample.csv"
+df.to_csv(output_csv, index=False)
+
+print("\nFeature extraction complete.")
+print("Successfully processed:", len(df))
+print("\nClass counts:")
+print(df["label"].value_counts())
+print("\nFirst five rows:")
+print(df.head())
+print("\nSaved to:", output_csv)
+
 import matplotlib.pyplot as plt
+
+plt.figure(figsize=(9, 6))
+
+for label in ["genuine", "fake"]:
+    subset = df[df["label"] == label]
+
+    plt.scatter(
+        subset["jitter"],
+        subset["shimmer"],
+        label=label,
+        alpha=0.75,
+        s=45
+    )
+
+plt.xlabel("Jitter (local)")
+plt.ylabel("Shimmer (local)")
+plt.title("ADD2022: Jitter vs Shimmer — Actual Labels")
+plt.legend()
+plt.grid(alpha=0.25)
+plt.tight_layout()
+plt.show()
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_curve
+import numpy as np
+
+from scipy.optimize import brentq
+from scipy.interpolate import interp1d
+
+# 1. Scale the features directly using the 'df' DataFrame
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(df[["jitter", "shimmer"]].values)
+
+# 2. Map actual labels: genuine = 0, fake = 1
+y_true = df["label"].map({
+    "genuine": 0,
+    "fake": 1
+}).to_numpy()
+
+# 3. Train classifier using Jitter and Shimmer
+model = LogisticRegression(class_weight="balanced", random_state=42)
+model.fit(X_scaled, y_true)
+
+# 4. Continuous scores: higher score means more likely fake
+scores = model.predict_proba(X_scaled)[:, 1]
+
+# 5. Compute ROC curve
+fpr, tpr, thresholds = roc_curve(y_true, scores, pos_label=1)
+fnr = 1 - tpr
+
+# 6. EER occurs where FPR = FNR
+eer = brentq(
+    lambda x: 1. - x - interp1d(
+        fpr, tpr, kind="linear", bounds_error=False,
+        fill_value=(tpr[0], tpr[-1])
+    )(x),
+    0.0, 1.0
+)
+
+print(f"Exploratory EER: {eer * 100:.2f}%")
+
+"""Checking MFCC, LFCC,CQT"""
+
+import os
+import librosa
+import numpy as np
+import pandas as pd
+
+from pathlib import Path
+
+ROOT = Path("/content/ADD2022/ADD_train_dev")
+SAMPLES_PER_CLASS = 200
+N_MFCC = 13
+N_LFCC = 13
+SR = 16000
+
+records = []
+
+for split in ["train", "dev"]:
+    label_file = ROOT / "label" / f"{split}_label.txt"
+    audio_dir = ROOT / split
+
+    grouped = {"genuine": [], "fake": []}
+
+    with open(label_file, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[-1].lower() in grouped:
+                grouped[parts[-1].lower()].append(parts[0])
+
+    selected = []
+    for label in ["genuine", "fake"]:
+        selected.extend(
+            (filename, label)
+            for filename in grouped[label][:SAMPLES_PER_CLASS]
+        )
+
+    print(f"\nProcessing {split}: {len(selected)} files")
+
+    for i, (filename, label) in enumerate(selected, start=1):
+        path = audio_dir / filename
+
+        try:
+            y, sr = librosa.load(path, sr=SR, mono=True)
+
+            if len(y) < 2048:
+                print("Skipped short audio:", filename)
+                continue
+
+            # MFCC: 13 coefficients
+            mfcc = librosa.feature.mfcc(
+                y=y, sr=sr, n_mfcc=N_MFCC, n_fft=2048, hop_length=512
+            )
+
+            # LFCC: linear-frequency cepstral coefficients
+            # Compute linear-frequency power spectrum, then DCT
+            S = np.abs(librosa.stft(
+                y, n_fft=2048, hop_length=512
+            )) ** 2
+
+            from scipy.fftpack import dct
+
+            log_spec = np.log(S + 1e-10)
+            lfcc = dct(log_spec, type=2, axis=0, norm="ortho")[:N_LFCC]
+
+            # CQT: summarize 24 frequency bins
+            cqt = np.abs(librosa.cqt(
+                y, sr=sr, hop_length=512,
+                n_bins=24, bins_per_octave=12
+            ))
+            cqt_db = librosa.amplitude_to_db(cqt + 1e-10, ref=np.max)
+
+            # Mean and standard deviation across time
+            features = {}
+
+            for name, matrix in [
+                ("mfcc", mfcc),
+                ("lfcc", lfcc),
+                ("cqt", cqt_db)
+            ]:
+                for j in range(matrix.shape[0]):
+                    features[f"{name}_mean_{j+1}"] = float(
+                        np.mean(matrix[j])
+                    )
+                    features[f"{name}_std_{j+1}"] = float(
+                        np.std(matrix[j])
+                    )
+
+            records.append({
+                "filename": filename,
+                "split": split,
+                "label": label,
+                **features
+            })
+
+        except Exception as e:
+            print(f"Skipped {filename}: {e}")
+
+        if i % 50 == 0:
+            print(f"Processed {i}/{len(selected)}")
+
+df_features = pd.DataFrame(records)
+
+csv_path = "/content/ADD2022_mfcc_lfcc_cqt.csv"
+df_features.to_csv(csv_path, index=False)
+
+print("\nFeature extraction completed.")
+print("Successfully processed:", len(df_features))
+print(df_features["label"].value_counts())
+print("Saved to:", csv_path)
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, adjusted_rand_score
 
+results = {}
 
-# ============================================================
-# 1. PATHS
-# ============================================================
+y_true = df_features["label"].map({
+    "genuine": 0,
+    "fake": 1
+}).to_numpy()
 
-BASE_PATH = "/content/ADD2022/ADD_train_dev"
+for feature_type in ["mfcc", "lfcc", "cqt"]:
 
-TRAIN_PATH = os.path.join(BASE_PATH, "train")
-DEV_PATH   = os.path.join(BASE_PATH, "dev")
+    # Select columns for this feature type
+    cols = [
+        col for col in df_features.columns
+        if col.startswith(feature_type + "_")
+    ]
 
-TRAIN_LABEL = os.path.join(BASE_PATH, "label", "train_label.txt")
-DEV_LABEL   = os.path.join(BASE_PATH, "label", "dev_label.txt")
+    X = df_features[cols].to_numpy()
 
+    # Remove invalid rows consistently
+    valid = np.isfinite(X).all(axis=1)
+    X_valid = X[valid]
+    labels_valid = y_true[valid]
 
-# ============================================================
-# 2. READ LABEL FILES
-# ============================================================
+    # Scale features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_valid)
 
-def read_labels(label_file):
+    # K-Means clustering
+    kmeans = KMeans(
+        n_clusters=2,
+        random_state=42,
+        n_init=20
+    )
+    clusters = kmeans.fit_predict(X_scaled)
 
-    data = []
+    silhouette = silhouette_score(X_scaled, clusters)
+    ari = adjusted_rand_score(labels_valid, clusters)
 
-    with open(label_file, "r", encoding="utf-8") as f:
+    results[feature_type] = {
+        "X_scaled": X_scaled,
+        "clusters": clusters,
+        "valid": valid,
+        "silhouette": silhouette,
+        "ari": ari
+    }
 
-        for line in f:
+    print(f"\n{feature_type.upper()} Results")
+    print(f"Silhouette Score: {silhouette:.4f}")
+    print(f"Adjusted Rand Index: {ari:.4f}")
+    print(pd.crosstab(
+        df_features.loc[valid, "label"],
+        clusters,
+        rownames=["Actual label"],
+        colnames=["Cluster"]
+    ))
 
-            line = line.strip()
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
-            if not line:
-                continue
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score, adjusted_rand_score
+from sklearn.metrics import confusion_matrix
 
-            filename, label = line.split()
+# Use the dataframe created in your feature extraction code
+df = df_features.copy()
 
-            data.append({
-                "filename": filename,
-                "label": label
-            })
+# Remove rows with missing or infinite feature values
+feature_cols = [
+    col for col in df.columns
+    if col.startswith(("mfcc_", "lfcc_", "cqt_"))
+]
 
-    return pd.DataFrame(data)
-
-
-train_labels = read_labels(TRAIN_LABEL)
-dev_labels   = read_labels(DEV_LABEL)
-
-labels_df = pd.concat(
-    [train_labels, dev_labels],
-    ignore_index=True
+df[feature_cols] = df[feature_cols].replace(
+    [np.inf, -np.inf], np.nan
 )
 
+df = df.dropna(subset=feature_cols).reset_index(drop=True)
 
-print("Total labeled files:", len(labels_df))
+# Convert actual labels into numerical labels
+# genuine = 0, fake = 1
+y_true = df["label"].map({
+    "genuine": 0,
+    "fake": 1
+}).to_numpy()
 
-print("\nLabel distribution:")
-print(labels_df["label"].value_counts())
-
-
-# ============================================================
-# 3. CREATE FULL AUDIO PATH
-# ============================================================
-
-def get_audio_path(filename):
-
-    if filename.startswith("ADD_T_"):
-        return os.path.join(TRAIN_PATH, filename)
-
-    elif filename.startswith("ADD_D_"):
-        return os.path.join(DEV_PATH, filename)
-
-    return None
-
-
-labels_df["filepath"] = labels_df["filename"].apply(
-    get_audio_path
-)
-
-
-# Check files actually exist
-
-labels_df["exists"] = labels_df["filepath"].apply(
-    os.path.exists
-)
-
-print("\nFiles found:")
-print(labels_df["exists"].value_counts())
-
-
-# Remove missing files
-
-labels_df = labels_df[
-    labels_df["exists"]
-].copy()
-
-
-# ============================================================
-# 4. BALANCED SAMPLE
-# ============================================================
-
-N_PER_CLASS = 500
-
-genuine_df = labels_df[
-    labels_df["label"] == "genuine"
-].sample(
-    n=N_PER_CLASS,
-    random_state=42
-)
-
-fake_df = labels_df[
-    labels_df["label"] == "fake"
-].sample(
-    n=N_PER_CLASS,
-    random_state=42
-)
-
-sample_df = pd.concat(
-    [genuine_df, fake_df]
-)
-
-sample_df = sample_df.sample(
-    frac=1,
-    random_state=42
-).reset_index(drop=True)
-
-
-print("\nSelected data:")
-print(sample_df["label"].value_counts())
-
-
-# ============================================================
-# 5. JITTER + SHIMMER FUNCTION
-# ============================================================
-
-def extract_jitter_shimmer(filepath):
-
-    try:
-
-        # Load audio
-        sound = parselmouth.Sound(filepath)
-
-        # Create pitch object
-        pitch = sound.to_pitch(
-            time_step=0.01,
-            pitch_floor=75,
-            pitch_ceiling=600
-        )
-
-        # Create PointProcess
-        point_process = parselmouth.praat.call(
-            [sound, pitch],
-            "To PointProcess (cc)"
-        )
-
-        # -------------------------
-        # JITTER
-        # -------------------------
-
-        jitter = parselmouth.praat.call(
-            point_process,
-            "Get jitter (local)",
-            0,
-            0,
-            0.0001,
-            0.02,
-            1.3
-        )
-
-        # -------------------------
-        # SHIMMER
-        # -------------------------
-
-        shimmer = parselmouth.praat.call(
-            [sound, point_process],
-            "Get shimmer (local)",
-            0,
-            0,
-            0.0001,
-            0.02,
-            1.3,
-            1.6
-        )
-
-        return jitter, shimmer
-
-    except Exception as e:
-
-        return np.nan, np.nan
-
-
-# ============================================================
-# 6. EXTRACT FEATURES
-# ============================================================
-
+# Store results for comparison
 results = []
 
-print("\nExtracting Jitter and Shimmer...")
-print("=" * 60)
+# Extract and cluster each feature type separately
+feature_groups = {
+    "MFCC": [
+        c for c in df.columns if c.startswith("mfcc_")
+    ],
+    "LFCC": [
+        c for c in df.columns if c.startswith("lfcc_")
+    ],
+    "CQT": [
+        c for c in df.columns if c.startswith("cqt_")
+    ]
+}
 
-for i, row in sample_df.iterrows():
+for feature_name, columns in feature_groups.items():
 
-    jitter, shimmer = extract_jitter_shimmer(
-        row["filepath"]
+    print("\n" + "=" * 60)
+    print(f"{feature_name} CLUSTERING")
+    print("=" * 60)
+
+    # Select the features for this experiment
+    X = df[columns].to_numpy(dtype=np.float64)
+
+    # Standardize the features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # K-Means clustering: two clusters
+    kmeans = KMeans(
+        n_clusters=2,
+        random_state=42,
+        n_init=10
     )
 
+    cluster_labels = kmeans.fit_predict(X_scaled)
+
+    # Evaluate clustering
+    sil_score = (
+        silhouette_score(X_scaled, cluster_labels)
+        if len(np.unique(cluster_labels)) > 1
+        else np.nan
+    )
+
+    ari_score = adjusted_rand_score(
+        y_true, cluster_labels
+    )
+
+    # Cluster composition against actual labels
+    cm = confusion_matrix(
+        y_true, cluster_labels, labels=[0, 1]
+    )
+
+    print("Number of audio samples:", len(df))
+    print("Number of features:", len(columns))
+    print("Silhouette Score:", round(sil_score, 4))
+    print("Adjusted Rand Index (ARI):", round(ari_score, 4))
+    print("\nConfusion matrix:")
+    print("Rows: actual [genuine, fake]")
+    print("Columns: cluster [0, 1]")
+    print(cm)
+
     results.append({
-        "filename": row["filename"],
-        "label": row["label"],
-        "filepath": row["filepath"],
-        "jitter": jitter,
-        "shimmer": shimmer
+        "Feature": feature_name,
+        "Samples": len(df),
+        "Number_of_Features": len(columns),
+        "Silhouette_Score": sil_score,
+        "ARI": ari_score
     })
 
-    if (i + 1) % 50 == 0:
+    # Reduce dimensions to two for visualization
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X_scaled)
 
-        print(
-            f"Processed {i+1}/{len(sample_df)}"
+    # Plot predicted clusters
+    plt.figure(figsize=(8, 6))
+
+    for cluster_id in np.unique(cluster_labels):
+        mask = cluster_labels == cluster_id
+
+        plt.scatter(
+            X_pca[mask, 0],
+            X_pca[mask, 1],
+            label=f"Cluster {cluster_id}",
+            alpha=0.65,
+            s=25
         )
 
+    plt.title(f"{feature_name}: K-Means Clustering")
+    plt.xlabel("Principal Component 1")
+    plt.ylabel("Principal Component 2")
+    plt.legend()
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.show()
 
-# ============================================================
-# 7. CREATE FEATURE DATAFRAME
-# ============================================================
+    # Plot actual genuine/fake labels for comparison
+    plt.figure(figsize=(8, 6))
 
-feature_df = pd.DataFrame(results)
+    for label_id, label_name in [(0, "Genuine"), (1, "Fake")]:
+        mask = y_true == label_id
 
+        plt.scatter(
+            X_pca[mask, 0],
+            X_pca[mask, 1],
+            label=label_name,
+            alpha=0.65,
+            s=25
+        )
 
-print("\nFeature dataframe:")
-display(feature_df.head())
+    plt.title(f"{feature_name}: Actual Audio Labels")
+    plt.xlabel("Principal Component 1")
+    plt.ylabel("Principal Component 2")
+    plt.legend()
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.show()
 
+# Final comparison table
+results_df = pd.DataFrame(results)
 
-# ============================================================
-# 8. REMOVE INVALID FEATURES
-# ============================================================
+print("\n\nFINAL COMPARISON")
+print(results_df.to_string(index=False))
 
-feature_df = feature_df.dropna(
-    subset=["jitter", "shimmer"]
-)
-
-feature_df = feature_df[
-    np.isfinite(feature_df["jitter"]) &
-    np.isfinite(feature_df["shimmer"])
-].copy()
-
-
-print("\nValid samples:")
-print(len(feature_df))
-
-print("\nValid samples by class:")
-print(feature_df["label"].value_counts())
-
-
-# ============================================================
-# 9. SAVE FEATURES
-# ============================================================
-
-feature_df.to_csv(
-    "/content/ADD2022_jitter_shimmer.csv",
+# Save evaluation results
+results_df.to_csv(
+    "/content/ADD2022_separate_clustering_results.csv",
     index=False
 )
 
-print(
-    "\nSaved:",
-    "/content/ADD2022_jitter_shimmer.csv"
+# Save sample-level cluster assignments
+assignment_df = df[
+    ["filename", "split", "label"]
+].copy()
+
+for feature_name, columns in feature_groups.items():
+    X_scaled = StandardScaler().fit_transform(
+        df[columns].to_numpy(dtype=np.float64)
+    )
+
+    model = KMeans(
+        n_clusters=2,
+        random_state=42,
+        n_init=10
+    )
+
+    assignment_df[f"{feature_name}_cluster"] = (
+        model.fit_predict(X_scaled)
+    )
+
+assignment_df.to_csv(
+    "/content/ADD2022_cluster_assignments.csv",
+    index=False
 )
 
+print("\nSaved evaluation results and cluster assignments.")
 
-# ============================================================
-# 10. CREATE FEATURE MATRIX
-# ============================================================
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import roc_curve
+import matplotlib.pyplot as plt
 
-X = feature_df[
-    ["jitter", "shimmer"]
-].values
+# Select MFCC columns
+mfcc_cols = [c for c in df_features.columns
+             if c.startswith("mfcc_")]
 
+data = df_features.dropna(subset=mfcc_cols + ["label"]).copy()
 
-# Actual labels
-y = feature_df[
-    "label"
-].map({
-    "genuine": 0,
-    "fake": 1
-}).values
+X = data[mfcc_cols].values
+y = data["label"].str.lower().values
 
+# Genuine = 0, Fake = 1
+y_true = np.where(y == "fake", 1, 0)
 
-# ============================================================
-# 11. STANDARDIZATION
-# ============================================================
-
+# Scale features
 scaler = StandardScaler()
-
 X_scaled = scaler.fit_transform(X)
 
+# Train One-Class SVM using genuine audio only
+X_genuine = X_scaled[y_true == 0]
 
-# ============================================================
-# 12. K-MEANS
-# ============================================================
+model = OneClassSVM(kernel="rbf", gamma="scale", nu=0.1)
+model.fit(X_genuine)
 
-kmeans = KMeans(
-    n_clusters=2,
-    random_state=42,
-    n_init=20
-)
+# Higher anomaly score indicates fake audio
+scores = -model.decision_function(X_scaled)
 
-clusters = kmeans.fit_predict(
-    X_scaled
-)
+# Calculate EER
+fpr, tpr, thresholds = roc_curve(y_true, scores)
+fnr = 1 - tpr
 
-feature_df["cluster"] = clusters
+eer_index = np.nanargmin(np.abs(fpr - fnr))
+eer = (fpr[eer_index] + fnr[eer_index]) / 2
 
+print("MFCC Results")
+print("EER:", round(eer * 100, 2), "%")
 
-# ============================================================
-# 13. SILHOUETTE SCORE
-# ============================================================
-
-silhouette = silhouette_score(
-    X_scaled,
-    clusters
-)
-
-
-# ============================================================
-# 14. ADJUSTED RAND INDEX
-# ============================================================
-
-ari = adjusted_rand_score(
-    y,
-    clusters
-)
-
-
-print("\n")
-print("=" * 60)
-print("CLUSTERING RESULTS")
-print("=" * 60)
-
-print(
-    f"Silhouette Score : {silhouette:.4f}"
-)
-
-print(
-    f"Adjusted Rand Index : {ari:.4f}"
-)
-
-
-# ============================================================
-# 15. CLUSTER VS ACTUAL LABEL
-# ============================================================
-
-print("\nCluster vs Actual Label:")
-
-cluster_table = pd.crosstab(
-    feature_df["label"],
-    feature_df["cluster"]
-)
-
-display(cluster_table)
-
-
-# ============================================================
-# 16. JITTER-SHIMMER — ACTUAL LABEL
-# ============================================================
-
-plt.figure(figsize=(9, 7))
-
-for label in ["genuine", "fake"]:
-
-    subset = feature_df[
-        feature_df["label"] == label
-    ]
-
-    plt.scatter(
-        subset["jitter"],
-        subset["shimmer"],
-        alpha=0.6,
-        label=label
-    )
-
-
-plt.xlabel("Jitter")
-plt.ylabel("Shimmer")
-
-plt.title(
-    "ADD 2022: Genuine vs Fake Speech\nJitter + Shimmer"
-)
-
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, label=f"MFCC (EER = {eer*100:.2f}%)")
+plt.plot([0, 1], [0, 1], "--")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve - MFCC")
 plt.legend()
-plt.grid(True)
-
+plt.grid()
 plt.show()
 
+# Select LFCC columns
+lfcc_cols = [c for c in df_features.columns
+             if c.startswith("lfcc_")]
 
-# ============================================================
-# 17. JITTER-SHIMMER — K-MEANS CLUSTERS
-# ============================================================
+data = df_features.dropna(subset=lfcc_cols + ["label"]).copy()
 
-plt.figure(figsize=(9, 7))
+X = data[lfcc_cols].values
+y = data["label"].str.lower().values
 
-for cluster in [0, 1]:
+y_true = np.where(y == "fake", 1, 0)
 
-    subset = feature_df[
-        feature_df["cluster"] == cluster
-    ]
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-    plt.scatter(
-        subset["jitter"],
-        subset["shimmer"],
-        alpha=0.6,
-        label=f"Cluster {cluster}"
-    )
+# Train using genuine audio only
+X_genuine = X_scaled[y_true == 0]
 
+model = OneClassSVM(kernel="rbf", gamma="scale", nu=0.1)
+model.fit(X_genuine)
 
-plt.xlabel("Jitter")
-plt.ylabel("Shimmer")
+scores = -model.decision_function(X_scaled)
 
-plt.title(
-    "ADD 2022: K-Means Clustering\nJitter + Shimmer"
-)
+fpr, tpr, thresholds = roc_curve(y_true, scores)
+fnr = 1 - tpr
 
+eer_index = np.nanargmin(np.abs(fpr - fnr))
+eer = (fpr[eer_index] + fnr[eer_index]) / 2
+
+print("LFCC Results")
+print("EER:", round(eer * 100, 2), "%")
+
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, label=f"LFCC (EER = {eer*100:.2f}%)")
+plt.plot([0, 1], [0, 1], "--")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve - LFCC")
 plt.legend()
-plt.grid(True)
-
+plt.grid()
 plt.show()
 
+# Select CQT columns
+cqt_cols = [c for c in df_features.columns
+            if c.startswith("cqt_")]
 
-# ============================================================
-# 18. DISPLAY FINAL DATA
-# ============================================================
+data = df_features.dropna(subset=cqt_cols + ["label"]).copy()
 
-display(
-    feature_df[
-        [
-            "filename",
-            "label",
-            "jitter",
-            "shimmer",
-            "cluster"
-        ]
-    ].head(20)
-)
+X = data[cqt_cols].values
+y = data["label"].str.lower().values
+
+y_true = np.where(y == "fake", 1, 0)
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Train using genuine audio only
+X_genuine = X_scaled[y_true == 0]
+
+model = OneClassSVM(kernel="rbf", gamma="scale", nu=0.1)
+model.fit(X_genuine)
+
+scores = -model.decision_function(X_scaled)
+
+fpr, tpr, thresholds = roc_curve(y_true, scores)
+fnr = 1 - tpr
+
+eer_index = np.nanargmin(np.abs(fpr - fnr))
+eer = (fpr[eer_index] + fnr[eer_index]) / 2
+
+print("CQT Results")
+print("EER:", round(eer * 100, 2), "%")
+
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, label=f"CQT (EER = {eer*100:.2f}%)")
+plt.plot([0, 1], [0, 1], "--")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve - CQT")
+plt.legend()
+plt.grid()
+plt.show()
 
 
 
